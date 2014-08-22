@@ -123,6 +123,19 @@ function Clag(est::varEstimate, lag)
 	return C[1+ntyp+(((lag-1)*vars):((lag)*vars-1)),:]
 end
 
+function λ(est::varEstimate)
+	# using Lutkepohl pg.139
+	T = est.obs - est.lags
+	K = est.vars
+	β = vec(est.C)
+	y = vec(est.Y)
+	Z = est.X'
+	Σ = est.Σ
+
+	λv = -(K*T)/2 * log(2π) - T/2 * log(det(Σ)) - 1/2 * (y-kron(eye(K),Z')*β)'*(kron(inv(Σ), eye(T)))*(y-kron(eye(K),Z')*β)
+	return λv[1]
+end
+
 function getR(a::Matrix{Bool})
 	b = prod(size(a))
 	c = sum(a)
@@ -144,7 +157,7 @@ end
 # Make a macro that will create matrix R and vector r for restricting the VAR
 # The user will write beta[1,2,1] - beta[2,1,3] = 10 (beta[from, to, lag]) and through 
 # regular expressions this will get parsed into a vector of the matrix
-# macro restrict(ex)
+# macro restrict(ex) gamaa restricts the coefficients
 
 function β(from, to, lag)
 	col = fill(0.0, (vars^2)*lags + vars*ntyp)
@@ -174,9 +187,20 @@ macro restrictions(ex)
 	return :(tuple($R, $r))
 end
 
-@restrictions begin
-    gamaa(3)=1
-end
+# vars, lags, and ntyp have to be defined
+# vars = e.vars
+# ntyp = e.ntyp
+# lags = e.lags
+
+# @restrictions begin
+#     gamaa(3)=1
+# end
+
+# @restrictions begin
+#     gamaa(4) + betaa(1,2,3) + betaa(3,2,1) = 10
+# 	betaa(3,4,2) - betaa(3,1,3) = 5
+# end
+
 
 # Heh, hard
 # function makeR(R::Matrix{Float64})

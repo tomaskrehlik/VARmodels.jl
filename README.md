@@ -32,3 +32,10 @@ rest[1, 5] = false
 restrictVAR2(e, rest, true)
 ````
 
+## TO-DO
+
+- Finish generalised restrictions. (See Lutkepohl, H. 2007, pg. 194) Mostly come up with function that generates suitable matrix `R` from output of `@restrictions` macro. So far undocumented macro, but see examples in the source code.
+- Add standard errors, even though it is not really neccessary for VAR, as usually the impulse response std errors are important
+- Add bootstrapped errors for the impulse responses. 
+- Add tests for anything. Basically just rewrite formulas using the `λ` function.
+- Start doing VECM, focusing first on unit-root tests.
