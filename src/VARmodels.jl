@@ -1,5 +1,14 @@
 module VARmodels
+	export 
+		varEstimate
+		fevd,
+		Psi,
+		restrictVAR,
+		restrictVAR2,
+		getR,
+		Phi
 
-# package code goes here
+		include("VAR.jl")
+
 
 end # module

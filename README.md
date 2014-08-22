@@ -22,4 +22,13 @@ Psi(e, 10)
 using PyPlot
 plot([e.Psi[1,1,i] for i=1:10])
 
+# Restriction of coefficients to zero
+# Matrix that has the same size as the coefficient matrix
+# Put false for which coeffcient you do not want to appear
+rest = fill(true, 3, 13)
+rest[1, 5] = false
+
+# Estimate, restriction matrix, if you want to fit using EGLS
+restrictVAR2(e, rest, true)
 ````
+

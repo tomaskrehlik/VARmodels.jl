@@ -226,6 +226,40 @@ function restrictVAR(est::varEstimate, restrictions::Expr, egls::Bool=false)
 	return est
 end
 
+function restrictVAR2(est::varEstimate, R::Matrix{Bool}, egls::Bool=false)
+	# TODO: Add small r from Lutkepohl 5.2
+	# The original data are not changed, due to very different structure in the estimation (vectorisation)
+	# The matrix R as the argument has to be of the size of the coefficients
+	# Y stay the same
+
+	# Naming conventions, this does not eat up memory, it is just renaming for more readability, 
+	# it is parsed out
+	Z = est.X'
+	Y = est.Y
+	Σ = est.Σ
+	L = est.lags
+	K = est.vars
+	k = est.obs-est.lags
+
+	# Temporary restriction to restrict betas only to 0
+	r = fill(0.0, prod(size(R))) 
+
+	z = vec(Y) - kron(eye(K), Z')*r
+	R = getR(R')
+
+	if egls
+		Σ1 = inv(Σ)
+		γ = R'*kron(Σ1, Z*Z')*R \ R'*kron(Σ1, Z)*z
+	else
+		γ = (R'*kron(eye(K), Z*Z')*R) \ R'*kron(eye(K), Z)*z
+	end
+	β = R*γ + r
+	est.C = reshape(β, L*K+1, K)
+
+	est.Σ = (est.X*est.C-est.Y)'*(est.X*est.C-est.Y) / k
+	return est
+end
+
 
 function Phi(estimate::varEstimate, H)
 	phi = zeros(estimate.vars, estimate.vars, H)
