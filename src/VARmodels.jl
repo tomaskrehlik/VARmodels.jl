@@ -1,14 +1,22 @@
 module VARmodels
+	using Formatting
+
+	include("dataManipulations.jl")
+	include("VAR.jl")
+	include("restrictions.jl")
+	include("bindings.jl")
+	include("fevd.jl")
+
 	export 
-		varEstimate
+		varEstimate,
 		fevd,
+		genFEVD,
+		fftFEVD,
+		fftGenFEVD,
 		Psi,
 		restrictVAR,
 		restrictVAR2,
 		getR,
 		Phi
-
-		include("VAR.jl")
-
 
 end # module

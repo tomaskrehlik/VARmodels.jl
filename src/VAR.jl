@@ -4,47 +4,6 @@
 # all reorderings in the standard identification structure.
 
 #
-###### Data transformations
-#
-
-# Lag data takes in a matrix. If we had columns a b c, then we will have a matrix with
-# a(-lags) b(-lags) c(-lags) a(-lags + 1) b(-lags + 1) c(-lags + 1) ... ... ... a(-1) b(-1) c(-1).
-# Maybe the columns should be reordered to have the closest lags at the front? changed!
-
-function lagData(data, lags::Int64, obs::Int64)
-	VARdata = data[lags:(obs-1),:]
-	for i=(lags-1):-1:1
-		VARdata = [VARdata data[i:(obs-lags+i-1),:]]
-	end
-	return VARdata
-end
-
-# dataMatrix is a function that creates a data matrix that goes into the estimation
-# args:
-#	- data: matrix of numbers
-# 	- lags: number of lags in the estimation
-# 	- typ: ASCIIString describing the type of VAR to be fitted, can be either of the following
-# 			- None, do not include neither constant nor trend
-# 			- Const, do include a constant
-# 			- Trend, do include a trend
-# 			- Const and trend, do include both constant and trend
-# Returns a data matrix as from lagData with first columns corresponding to type.
-
-function dataMatrix(data, lags, typ)
-	obs = size(data)[1]
-	data = lagData(data, lags, obs)
-
-	typ=="None" && return(data)
-	typ=="Const" && return([ones(obs-lags) data])
-	typ=="Const and trend" && return([ones(obs-lags) 1:(obs-lags) data])
-	typ=="Trend" && return([1:(obs-lags) data])
-end
-
-#
-######
-#
-
-#
 ###### Definition of the specialised type
 # 
 
@@ -62,6 +21,8 @@ end
 # 
 # Moreover, the current estimation technique will probably be replaced by the method from 
 # function restrictVAR2, because it is more general.
+
+import Base: show
 
 function estimateVAR(data::Matrix{Float64}, lags::Int, typ::String)
 	X = dataMatrix(data, lags, typ)
@@ -95,12 +56,12 @@ type varEstimate
 	HPhi::Int
 	Phi::Array{Float64, 3}
 	Psi::Array{Float64, 3}
+	seriesNames::Vector{String}
 
-	function varEstimate(data::Matrix{Float64},lags::Int,typ::String)
+	function varEstimate(data::Matrix{Float64},lags::Int, typ::String)
 		(X, Y, obs, vars, C, Σ, ntyp) = estimateVAR(data::Matrix{Float64},lags::Int,typ::String)
-		new(lags, typ, ntyp, vars, obs, X, Y, C, Σ, 0, 0, zeros(vars,vars,1), zeros(vars,vars,1))
+		new(lags, typ, ntyp, vars, obs, X, Y, C, Σ, 0, 0, zeros(vars,vars,1), zeros(vars,vars,1), ["" for i=1:vars])
 	end
-
 end
 
 # type varRestrictions
@@ -154,69 +115,7 @@ function getR(a::Matrix{Bool})
 	return mat
 end
 
-# Make a macro that will create matrix R and vector r for restricting the VAR
-# The user will write beta[1,2,1] - beta[2,1,3] = 10 (beta[from, to, lag]) and through 
-# regular expressions this will get parsed into a vector of the matrix
-# macro restrict(ex) gamaa restricts the coefficients
 
-function β(from, to, lag)
-	col = fill(0.0, (vars^2)*lags + vars*ntyp)
-	println(1 + vars*ntyp + (lag-1)*(vars^2) + (from-1)*vars + (to-1))
-	col[1 + vars*ntyp + (lag-1)*(vars^2) + (from-1)*vars + (to-1)] = 1.0
-	return col
-end
-
-function betaa(from, to, lag)
-	return β(from, to, lag)
-end
-
-function γ(eq)
-	col = fill(0.0, (vars^2)*lags + vars*ntyp)
-	col[eq] = 1.0
-	return col
-end
-
-function gamaa(eq)
-	return γ(eq)
-end
-
-macro restrictions(ex)
-	ind = [2:2:length(ex.args)]
-	R = apply(Expr, prepend!([:($(ex.args[i].args[1])) for i=ind], [:call, :hcat]));
-	r = [:($(ex.args[i].args[2].args[2])) for i=ind];
-	return :(tuple($R, $r))
-end
-
-# vars, lags, and ntyp have to be defined
-# vars = e.vars
-# ntyp = e.ntyp
-# lags = e.lags
-
-# @restrictions begin
-#     gamaa(3)=1
-# end
-
-# @restrictions begin
-#     gamaa(4) + betaa(1,2,3) + betaa(3,2,1) = 10
-# 	betaa(3,4,2) - betaa(3,1,3) = 5
-# end
-
-
-# Heh, hard
-# function makeR(R::Matrix{Float64})
-# 	base = eye(size(R)[1])
-
-# 	if numberInColumn==1
-# 		base
-
-# 	end
-# end
-
-function testRestrictions(R::Matrix{Float64})
-	@assume rank(R)==apply(max, size(mat)) "The constraints are not independent. One can be expressed as linear combination of other."
-	# Alright, this is making me nuts :-D
-	@assume all(mapslices((x) -> sum(map((y) -> y==0.0, x)), getR(mat), [2]) .>= apply(min, size(R))) "Your constants yield the model overidentified. For example, beta(1,2,3) + beta(2,3,1) = 0 and beta(1,2,3) + beta(2,2,1) = 0 imply only equality of beta(2,2,1) - beta(2,3,1) = 0 and does not depend on beta(1,2,3)."
-end
 
 function restrictVAR(est::varEstimate, restrictions::Expr, egls::Bool=false)
 	# TODO: Add small r from Lutkepohl 5.2
@@ -319,3 +218,42 @@ function fevd(estimate::varEstimate, H)
 	return FEVD
 end
 
+function show(io::IO, a::varEstimate)
+	line = "--------------------------------------------------------"
+	println(io, line)
+	println(io, "                    VAR ESTIMATE")
+	println(io, line)
+	print(io, "Series: ")
+	i=1
+	while i < (length(a.seriesNames))
+		print(io, (a.seriesNames)[i])
+		print(io, ", ")
+		i += 1
+	end
+	print(io, a.seriesNames[end])
+	print(io, "\n")
+
+	print(io, "Lags: ")
+	println(io, a.lags)
+
+	print(io, "Type: ")
+	println(io, a.typ)
+
+	println(io, line)
+
+	if (a.typ == "Const") || (a.typ == "Trend")
+		println(io, a.typ)
+		println(io, mapslices((x)->join(x, "\n"), mapslices((x)->join(x, "  "), map((x)->format(x, precision = 2, signed = true), a.C[1,:]), [2]), [1])[1,1])
+	elseif a.typ == "Const and trend"
+		println(io, a.typ)
+		println(io, mapslices((x)->join(x, "\n"), mapslices((x)->join(x, "  "), map((x)->format(x, precision = 2, signed = true), a.C[1:2,:]), [2]), [1])[1,1])
+	end
+
+	for i=1:a.lags
+		println(io, line)
+		print(io,"Lag ")
+		println(io, i)
+		println(io, line)
+		println(io, mapslices((x)->join(x, "\n"), mapslices((x)->join(x, "  "), map((x)->format(x, precision = 2, signed = true), Clag(a,i)), [2]), [1])[1,1])
+	end
+end
