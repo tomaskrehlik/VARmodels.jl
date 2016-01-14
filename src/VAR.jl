@@ -24,20 +24,19 @@
 
 import Base: show
 
-function estimateVAR(data::Matrix{Float64}, lags::Int, typ::String)
+function estimateVAR(data::Matrix{Float64}, lags::Int, typ::AbstractString)
 	X = dataMatrix(data, lags, typ)
 	Y = data[(1+lags):end,:]
 	obs, vars = size(data)
 	C = (X'*X) \ X'*Y
-
+	obs = obs - lags
 	# Get numerical type
 	typ=="None" && (ntyp = 0)
 	typ=="Const" && (ntyp = 1)
 	typ=="Const and trend" && (ntyp = 2)
 	typ=="Trend" && (ntyp = 1)
 
-	# Σ = (X*C-Y)'*(X*C-Y) / (obs-lags-lags*vars-1)
-	Σ = (X*C-Y)'*(X*C-Y) / (obs-lags)
+	Σ = cov(Y-X*C)*(obs-1)/(obs-lags*vars-ntyp)
 
 	return (X, Y, obs, vars, C, Σ, ntyp)
 end
@@ -56,10 +55,10 @@ type varEstimate
 	HPhi::Int
 	Phi::Array{Float64, 3}
 	Psi::Array{Float64, 3}
-	seriesNames::Vector{String}
+	seriesNames::Vector{AbstractString}
 
-	function varEstimate(data::Matrix{Float64},lags::Int, typ::String)
-		(X, Y, obs, vars, C, Σ, ntyp) = estimateVAR(data::Matrix{Float64},lags::Int,typ::String)
+	function varEstimate(data::Matrix{Float64},lags::Int, typ::AbstractString)
+		(X, Y, obs, vars, C, Σ, ntyp) = estimateVAR(data::Matrix{Float64},lags::Int,typ::AbstractString)
 		new(lags, typ, ntyp, vars, obs, X, Y, C, Σ, 0, 0, zeros(vars,vars,1), zeros(vars,vars,1), ["" for i=1:vars])
 	end
 end
@@ -211,12 +210,12 @@ function Psi(estimate::varEstimate, H)
 	return psi
 end
 
-function fevd(estimate::varEstimate, H)
-	Psi(estimate, H)
-	FEVD = [sum(estimate.Psi[i,j,:].^2) for i=1:estimate.vars, j=1:estimate.vars]
-	FEVD = apply(hcat,[FEVD[:,i]/sum(FEVD[:,i]) for i=1:estimate.vars])
-	return FEVD
-end
+# function fevd(estimate::varEstimate, H)
+# 	Psi(estimate, H)
+# 	FEVD = [sum(estimate.Psi[i,j,:].^2) for i=1:estimate.vars, j=1:estimate.vars]
+# 	FEVD = apply(hcat,[FEVD[:,i]/sum(FEVD[:,i]) for i=1:estimate.vars])
+# 	return FEVD
+# end
 
 function show(io::IO, a::varEstimate)
 	line = "--------------------------------------------------------"
@@ -256,4 +255,18 @@ function show(io::IO, a::varEstimate)
 		println(io, line)
 		println(io, mapslices((x)->join(x, "\n"), mapslices((x)->join(x, "  "), map((x)->format(x, precision = 2, signed = true), Clag(a,i)), [2]), [1])[1,1])
 	end
+end
+
+function simulateVAR(estimate::varEstimate, N, burnout=1000)
+	d = MvNormal(estimate.Σ)
+	errors = rand(d, N+burnout)
+    simulation = zeros((N+burnout, estimate.vars))
+    for i=(estimate.lags+1):(N + burnout)
+        simulation[i, :] = estimate.C[1,:]
+        for j=1:estimate.lags
+            simulation[i, :] += simulation[i-j,:] * estimate.C[(1:estimate.vars)+1+(j-1)*estimate.vars,:]
+        end
+        simulation[i, :] += errors[:, i]'
+    end
+    return simulation[(burnout+1):(size(simulation)[1]), :]
 end

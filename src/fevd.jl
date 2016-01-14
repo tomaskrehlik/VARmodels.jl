@@ -1,7 +1,7 @@
 function fevd(estimate::varEstimate, H)
 	Psi(estimate, H)
 	FEVD = [sum(estimate.Psi[i,j,:].^2) for i=1:estimate.vars, j=1:estimate.vars]
-	FEVD = apply(hcat,[FEVD[:,i]/sum(FEVD[:,i]) for i=1:estimate.vars])
+	FEVD = hcat([FEVD[:,i]/sum(FEVD[:,i]) for i=1:estimate.vars]...)
 	return FEVD
 end
 
@@ -12,18 +12,18 @@ function genFEVD(estimate::varEstimate, H::Int, corzer::Bool = false)
 	Σ = deepcopy(estimate.Σ)
 	K = estimate.vars
 
-	den = diag(mapreduce((i)->(A[:,:,i]'*Σ*A[:,:,i]), +, [1:H]))
+	den = diag(mapreduce((i)->(A[:,:,i]'*Σ*A[:,:,i]), +, collect(1:H)))
 
 	if corzer
 		Σ = diagm(diag(Σ))
-		num = mapreduce((i)->(A[:,:,i]'*Σ).^2, +, [1:H])
+		num = mapreduce((i)->(A[:,:,i]'*Σ).^2, +, collect(1:H))
 	else
-		num = mapreduce((i)->(A[:,:,i]'*Σ).^2, +, [1:H])	
+		num = mapreduce((i)->(A[:,:,i]'*Σ).^2, +, collect(1:H))	
 	end
 
-	θ = [num[i,j]/(den[i]*Σ[i,i]) for i=1:K, j=1:K]
+	θ = [num[i,j]/(den[i]*sqrt(Σ[j,j])) for i=1:K, j=1:K]
 	for i=1:K
-		θ[:,i] = θ[:,i]/sum(θ[:,i])
+		θ[i,:] = θ[i,:]/sum(θ[i,:])
 	end
 	θ = convert(Array{Float64}, θ)
 
@@ -40,7 +40,6 @@ function fftFEVD(estimate::varEstimate, H)
 	P = chol(estimate.Σ)
 
 	ft = mapslices(fft, estimate.Phi, [3])
-
 	decomp = [(abs(ft[:,i,z]'*P'[:,j]).^2)[1] / H for i=1:k, j = 1:k, z = 1:H]
 	denom = mapslices(sum, decomp, [3, 2])
 
@@ -58,33 +57,42 @@ function fftGenFEVD(estimate::varEstimate, H, nocorr = false)
 		Σ = estimate.Σ
 	end
 
-	P = chol(Σ)
-
+	P = convert(Array{Float64,2}, chol(Σ))
 	ft = mapslices(fft, estimate.Phi, [3])
+	decompNew = zeros(k,k,H)
+	for i=1:k
+		for j=1:k
+			for h=1:H
+				decompNew[i,j,h] = (abs(ft[:,i,h]'*Σ'[:,j]).^2)[1] / H
+			end
+		end
+	end
+	# decompNew = [(abs(ft[:,i,h]'*Σ'[:,j]).^2)[1] / H for i=1:k, j = 1:k, h = 1:H]
+	decomp = zeros(k,k,H)
+	for i=1:k
+		for j=1:k
+			for h=1:H
+				decomp[i,j,h] = (abs(ft[:,i,h]'*P'[:,j]).^2)[1] / H
+			end
+		end
+	end
+	# decomp = [(abs(ft[:,i,h]'*P'[:,j]).^2)[1] / H for i=1:k, j = 1:k, h = 1:H]
+	denom = vec(mapslices(sum, decomp, [3, 2]))
+	
+	θ = [decompNew[i,j,h]/(denom[i]*sqrt(Σ[j,j])) for i=1:k, j = 1:k, h = 1:H]
+	# display(θ)
+	# div = vec(mapslices(sum, θ, [2,3]))
 
-	decompNew = [(abs(ft[:,i,z]'*Σ'[:,j]).^2)[1] / H for i=1:k, j = 1:k, z = 1:H]
-	decomp = [(abs(ft[:,i,z]'*P'[:,j]).^2)[1] / H for i=1:k, j = 1:k, z = 1:H]
-	denom = mapslices(sum, decomp, [3, 2])
-
-	θ = zeros(k,k,H)
-
-	for i = 1:k
-		for j = 1:k
-			for h = 1:H
-				θ[i,j,h] = decompNew[i,j,h]/(denom[i,1,1]*Σ[i,i])
+	for i=1:k
+		s = sum(θ[i,:,:])
+		for j=1:k
+			for h=1:H
+				θ[i,j,h] = θ[i,j,h]/s
 			end
 		end
 	end
 
-	div = mapslices(sum, θ, [1,3])
-
-	for i = 1:k
-		for j = 1:k
-			for h = 1:H
-				θ[i,j,h] = θ[i,j,h] / div[1,j,1]
-			end
-		end
-	end
+	# θ = [θ[i,j,h] / sum(θ[i,:,:]) for i=1:k, j = 1:k, h = 1:H]
 
 	return θ
 end
