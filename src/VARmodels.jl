@@ -18,21 +18,33 @@ module VARmodels
 	using Formatting
 	using Distributions
 
+	abstract VARRepresentation
+
 	include("dataManipulations.jl")
 	include("VAR.jl")
 	include("restrictions.jl")
 	include("bindings.jl")
 	include("fevd.jl")
 	include("plots.jl")
+	include("cointegrationJohansen.jl")
 
 	# Main VAR machinery
 	export 
 		varEstimate,
+		varEstimateShrink,
 		Psi,
 		restrictVAR,
 		restrictVAR2,
 		getR,
 		Phi
+
+	# Main VECM machinery
+	export
+		cointegrationJohansen,
+		johansenTeststat,
+		CointegrationEstimate,
+		getVARrepresentation,
+		varRepresentationVECM
 
 	# FEVD functions
 	export 

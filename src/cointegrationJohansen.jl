@@ -21,7 +21,7 @@ function selector(i, n)
 end
 
 function cointegrationJohansen(data, ecdet, K, spec; season = "no", dumvar = "no")
-	@assert K > 2 "K must be at least 2."
+	@assert K >= 2 "K must be at least 2."
 	N, P = size(data)
 	season == "no" ? s = 0 : s = season - 1
 	@assert N * P > P + s * P + K * P^2 + P * (P + 1)/2 "Insufficient degrees of freedom."
@@ -219,7 +219,6 @@ function getVARrepresentation(cointObject, r::Int)
 	@assert typeof(cointObject)==CointegrationEstimate "The first argument should be cointegration estimate."
 	@assert r < size(cointObject.data)[2] "The cointegration rank---the second argument---can be no bigger than number of variables in the system."
 
-	P = size(cointObject.ZK)[2]-1
 	N, vars = size(cointObject.data)
 
 
@@ -229,16 +228,16 @@ function getVARrepresentation(cointObject, r::Int)
 	Π = cointObject.W[:, 1:r] * cointObject.V[:,1:r]'
 
 	if cointObject.ecdet == "const"
-		detcoeffs = Π[:, P + 1]
-		Π = Π[:, 1:P]
+		detcoeffs = Π[:, vars + 1]
+		Π = Π[:, 1:vars]
 		rhs = hcat([1 for i in 1:size(cointObject.ZK)[1]], cointObject.Z1)
 	elseif cointObject.ecdet == "none"
 		detcoeffs = coeffs[r+1,:]'
 		rhs = cointObject.Z1
 	elseif cointObject.ecdet == "trend"
-		detcoeffs = hcat(coeffs[r+1,:]',Π[:,P + 1])
-		Π = Π[:, 1:P]
-		rhs = hcat([1 for i in 1:size(cointObject.ZK)[1]], cointObject.ZK[:, P + 1], cointObject.Z1[:, 2:size(cointObject.Z1)[2]])
+		detcoeffs = hcat(coeffs[r+1,:]',Π[:,vars + 1])
+		Π = Π[:, 1:vars]
+		rhs = hcat([1 for i in 1:size(cointObject.ZK)[1]], cointObject.ZK[:, vars + 1], cointObject.Z1[:, 2:size(cointObject.Z1)[2]])
 	end
 
 	cointObject.ecdet == "const" ? a = 0 : a = 1
@@ -259,19 +258,17 @@ function getVARrepresentation(cointObject, r::Int)
 
 	detcoeffs = detcoeffs'
 	
-
-	print(coeffs)
 	lags = N-size(cointObject.ZK)[1]
 	Γ = coeffs[((-(lags-1)*vars+1):0)+size(coeffs)[1],:]'
 	A = zeros(vars, vars, lags)
 
-	i = hcat([P*i + 1 for i=0:(lags-2)], [P + P*i for i=0:(lags-2)])
+	i = hcat([vars*i + 1 for i=0:(lags-2)], [vars + vars*i for i=0:(lags-2)])
 	if cointObject.spec == "transitory"
 		A[:,:,1] = Γ[:, i[1,1]:i[1,2]] + Π + eye(vars)
 		for j=2:(lags-1)
 			A[:,:,j] = Γ[:, i[j,1]:i[j,2]] - Γ[:,i[j - 1,1]:i[j - 1,2]]
 		end
-		A[:,:,lags] = -Γ[:, i[lags,1]:i[lags, 2]]
+		A[:,:,lags] = -Γ[:, i[lags-1,1]:i[lags-1, 2]]
 	elseif cointObject.spec == "longrun"
 		A[:,:,1] = Γ[:, i[1,1]:i[1,2]] + eye(vars)
 		for j=2:(lags-1)
@@ -281,18 +278,20 @@ function getVARrepresentation(cointObject, r::Int)
 	end
 
 	determin_data = rhs[:,1:size(detcoeffs)[1]]
-	data = lagData(vcat(cointObject.data, zeros(P)'), lags, N)
-	resids = (cointObject.data)[(lags+1):size(cointObject.data)[1],:] - determin_data * detcoeffs
-	for i=1:size(A)[3]
-		resids -= data[:, (1:vars) + (i-1)*vars] * A[:,:,i]'
-	end
+	data = lagData(vcat(cointObject.data, zeros(vars)'), lags, N)
+	Y = (cointObject.data)[(lags+1):size(cointObject.data)[1],:]
+	C = vcat(detcoeffs, vcat([A[:,:,i]' for i=1:size(A)[3]]...))
+	X = hcat(determin_data, data)
+	
+	resids = Y - X * C
 
-	return (A, resids, Γ, Π)
+	Σ = cov(resids)*(N-1)/(N-lags*vars-size(detcoeffs)[1]) 
+	return (lags, size(detcoeffs)[1], vars, N, X, Y, C, Σ)
 end
 
-type varRepresentation <: varEstimate
+type varRepresentationVECM <: VARRepresentation
 	lags::Int
-	typ::ASCIIString
+	typ::AbstractString
 	ntyp::Int
 	vars::Int
 	obs::Int
@@ -300,14 +299,15 @@ type varRepresentation <: varEstimate
 	Y::Matrix{Float64}
 	C::Matrix{Float64}
 	Σ::Matrix{Float64}
+	r::Int
 	HPsi::Int
 	HPhi::Int
 	Phi::Array{Float64, 3}
 	Psi::Array{Float64, 3}
 	seriesNames::Vector{AbstractString}
 
-	function varRepresentation(data::Matrix{Float64},lags::Int, typ::AbstractString)
-		(X, Y, obs, vars, C, Σ, ntyp) = estimateVAR(data::Matrix{Float64},lags::Int,typ::AbstractString)
-		new(lags, typ, ntyp, vars, obs, X, Y, C, Σ, 0, 0, zeros(vars,vars,1), zeros(vars,vars,1), ["" for i=1:vars])
+	function varRepresentationVECM(cointegrationEstimate, r::Int)
+		(lags, ntyp, vars, obs, X, Y, C, Σ) = getVARrepresentation(cointegrationEstimate, r::Int)
+		new(lags, "varRepresentation", ntyp, vars, obs, X, Y, C, Σ, r, 0, 0, zeros(vars,vars,1), zeros(vars,vars,1), ["" for i=1:vars])
 	end
 end

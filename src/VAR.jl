@@ -24,7 +24,7 @@
 
 import Base: show
 
-function estimateVAR(data::Matrix{Float64}, lags::Int, typ::AbstractString)
+function estimateVAR(data::Matrix{Float64}, lags::Int, typ::String)
 	X = dataMatrix(data, lags, typ)
 	Y = data[(1+lags):end,:]
 	obs, vars = size(data)
@@ -35,15 +35,32 @@ function estimateVAR(data::Matrix{Float64}, lags::Int, typ::AbstractString)
 	typ=="Const" && (ntyp = 1)
 	typ=="Const and trend" && (ntyp = 2)
 	typ=="Trend" && (ntyp = 1)
-
-	Σ = cov(Y-X*C)*(obs-1)/(obs-lags*vars-ntyp)
+	u = (Y-X*C)
+	Σ = Hermitian(1/(obs-lags*vars-ntyp) * u'*u)
 
 	return (X, Y, obs, vars, C, Σ, ntyp)
 end
 
-type varEstimate
+function estimateVARShrinkage(data::Matrix{Float64}, lags::Int, typ::String, λ::Float64)
+	X = dataMatrix(data, lags, typ)
+	Y = data[(1+lags):end,:]
+	obs, vars = size(data)
+	C = (X'*X + λ * obs * eye(size(X)[2])) \ X'*Y
+	obs = obs - lags
+	# Get numerical type
+	typ=="None" && (ntyp = 0)
+	typ=="Const" && (ntyp = 1)
+	typ=="Const and trend" && (ntyp = 2)
+	typ=="Trend" && (ntyp = 1)
+	u = (Y-X*C)
+	Σ = 1/(obs-lags*vars-ntyp) * u'*u
+
+	return (X, Y, obs, vars, C, Σ, ntyp)
+end
+
+type varEstimate <: VARRepresentation
 	lags::Int
-	typ::ASCIIString
+	typ::String
 	ntyp::Int
 	vars::Int
 	obs::Int
@@ -55,35 +72,48 @@ type varEstimate
 	HPhi::Int
 	Phi::Array{Float64, 3}
 	Psi::Array{Float64, 3}
-	seriesNames::Vector{AbstractString}
+	seriesNames::Vector{String}
 
-	function varEstimate(data::Matrix{Float64},lags::Int, typ::AbstractString)
-		(X, Y, obs, vars, C, Σ, ntyp) = estimateVAR(data::Matrix{Float64},lags::Int,typ::AbstractString)
+	function varEstimate(data::Matrix{Float64},lags::Int, typ::String)
+		(X, Y, obs, vars, C, Σ, ntyp) = estimateVAR(data::Matrix{Float64},lags::Int,typ::String)
 		new(lags, typ, ntyp, vars, obs, X, Y, C, Σ, 0, 0, zeros(vars,vars,1), zeros(vars,vars,1), ["" for i=1:vars])
 	end
 end
 
-# type varRestrictions
-# 	R::Matrix{Float64}
-# 	r::Vector{Float64}
-# 	desc::Vector{ASCIIString}
+type varEstimateShrink <: VARRepresentation
+	lags::Int
+	typ::String
+	ntyp::Int
+	vars::Int
+	obs::Int
+	X::Matrix{Float64}
+	Y::Matrix{Float64}
+	C::Matrix{Float64}
+	Σ::Matrix{Float64}
+	HPsi::Int
+	HPhi::Int
+	Phi::Array{Float64, 3}
+	Psi::Array{Float64, 3}
+	seriesNames::Vector{String}
+	λ
 
-# 	function varRestrictions(R::Matrix{Float64}, r::Vector{Float64}, desc::Vector{ASCIIString})
-# 		@assume size(R)[1] == size(r)
-# 		new(R, r, desc)
-# 	end
-# end
+	function varEstimateShrink(data::Matrix{Float64},lags::Int, typ::String, λ)
+		(X, Y, obs, vars, C, Σ, ntyp) = estimateVARShrinkage(data::Matrix{Float64},lags::Int,typ::String, λ)
+		new(lags, typ, ntyp, vars, obs, X, Y, C, Σ, 0, 0, zeros(vars,vars,1), zeros(vars,vars,1), ["" for i=1:vars], λ)
+	end
+end
 
-function Clag(est::varEstimate, lag)
+
+function Clag(est::VARRepresentation, lag)
 	C = est.C
 	ntyp = est.ntyp
 	(coefs, vars) = size(C)
 	lags = (coefs-ntyp)/vars
-	lags < lag ? error("The demanded lag is higher than existing") : ""
+	@assert lags >= lag "The demanded lag is higher than existing"
 	return C[1+ntyp+(((lag-1)*vars):((lag)*vars-1)),:]
 end
 
-function λ(est::varEstimate)
+function λ(est::VARRepresentation)
 	# using Lutkepohl pg.139
 	T = est.obs - est.lags
 	K = est.vars
@@ -182,8 +212,8 @@ function restrictVAR2(est::varEstimate, R::Matrix{Bool}, egls::Bool=false)
 	return est
 end
 
-
-function Phi(estimate::varEstimate, H)
+# Nejde rychlejc, zkusil jsem spoustu možností včetně prealokací
+function Phi(estimate::VARRepresentation, H)
 	phi = zeros(estimate.vars, estimate.vars, H)
 	phi[:,:,1] = eye(estimate.vars)
 
@@ -191,14 +221,14 @@ function Phi(estimate::varEstimate, H)
 		k = j > estimate.lags ? estimate.lags + 1 : j
 		for i=1:(k-1)
 			phi[:,:,j] += phi[:,:,j-i]*Clag(estimate, i)
-	 	end
+		end
 	end
 	estimate.Phi = phi
 	estimate.HPhi = H
 	return phi
 end
 
-function Psi(estimate::varEstimate, H)
+function Psi(estimate::VARRepresentation, H)
 	Phi(estimate, H)
 	psi = deepcopy(estimate.Phi)
 	P = chol(estimate.Σ)
@@ -210,14 +240,7 @@ function Psi(estimate::varEstimate, H)
 	return psi
 end
 
-# function fevd(estimate::varEstimate, H)
-# 	Psi(estimate, H)
-# 	FEVD = [sum(estimate.Psi[i,j,:].^2) for i=1:estimate.vars, j=1:estimate.vars]
-# 	FEVD = apply(hcat,[FEVD[:,i]/sum(FEVD[:,i]) for i=1:estimate.vars])
-# 	return FEVD
-# end
-
-function show(io::IO, a::varEstimate)
+function show(io::IO, a::VARRepresentation)
 	line = "--------------------------------------------------------"
 	println(io, line)
 	println(io, "                    VAR ESTIMATE")
@@ -257,16 +280,32 @@ function show(io::IO, a::varEstimate)
 	end
 end
 
-function simulateVAR(estimate::varEstimate, N, burnout=1000)
-	d = MvNormal(estimate.Σ)
+function simulateVAR(estimate::VARRepresentation, N, burnout=1000)
+	exogen = zeros((N+burnout, estimate.vars))
+	for i=1:(N + burnout)
+		if estimate.typ == "None"
+			exogen[i, :] = zeros(size(estimate.C)[2])
+		elseif estimate.typ == "Const"
+			exogen[i, :] = estimate.C[1,:]
+		elseif estimate.typ == "Trend"
+			exogen[i, :] = estimate.C[1,:]*i
+		elseif estimate.typ == "Const and trend"
+			exogen[i, :] = estimate.C[1,:] + estimate.C[2,:]*i
+		end
+	end
+	return simulateVAR(estimate.Σ, [Clag(estimate, i) for i = 1:estimate.lags], exogen, N, burnout)
+end
+
+function simulateVAR(Σ, Π, exogen, N, burnout=1000)
+	d = MvNormal(Σ)
 	errors = rand(d, N+burnout)
-    simulation = zeros((N+burnout, estimate.vars))
-    for i=(estimate.lags+1):(N + burnout)
-        simulation[i, :] = estimate.C[1,:]
-        for j=1:estimate.lags
-            simulation[i, :] += simulation[i-j,:] * estimate.C[(1:estimate.vars)+1+(j-1)*estimate.vars,:]
-        end
-        simulation[i, :] += errors[:, i]'
-    end
-    return simulation[(burnout+1):(size(simulation)[1]), :]
+	simulation = zeros((N+burnout, size(Σ)[1]))
+	for i=(size(Π)[1]+1):(N + burnout)
+		simulation[i, :] = exogen[i, :]
+		for j=1:(size(Π)[1])
+			simulation[i, :] += Π'[j] * simulation[i-j,:]
+		end
+		simulation[i, :] += errors[:, i]
+	end
+	return simulation[(burnout+1):(size(simulation)[1]), :]
 end
