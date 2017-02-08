@@ -265,10 +265,10 @@ function show(io::IO, a::VARRepresentation)
 
 	if (a.typ == "Const") || (a.typ == "Trend")
 		println(io, a.typ)
-		println(io, mapslices((x)->join(x, "\n"), mapslices((x)->join(x, "  "), map((x)->format(x, precision = 2, signed = true), a.C[1,:]), [2]), [1])[1,1])
+		println(io, mapslices((x)->join(x, "\n"), mapslices((x)->join(x, "  "), map((x)->format(x, precision = 2, signed = true), a.C[1:1,:]), [2]), [1])[1,1])
 	elseif a.typ == "Const and trend"
 		println(io, a.typ)
-		println(io, mapslices((x)->join(x, "\n"), mapslices((x)->join(x, "  "), map((x)->format(x, precision = 2, signed = true), a.C[1:2,:]), [2]), [1])[1,1])
+		println(io, mapslices((x)->join(x, "\n"), mapslices((x)->join(x, "  "), map((x)->format(x, precision = 2, signed = true), a.C[e:2,:]), [2]), [1])[1,1])
 	end
 
 	for i=1:a.lags
